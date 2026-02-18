@@ -33,6 +33,38 @@ function getAIClient(): GoogleGenAI | null {
   return aiClient;
 }
 
+function normalizeJournalInsight(text: string): string {
+  return text
+    .replace(/^#{1,6}\s*/gm, "")
+    .replace(/\*\*(.*?)\*\*/g, "$1")
+    .replace(/^\s*[-*]\s+/gm, "")
+    .trim();
+}
+
+function explainImageError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const lowered = raw.toLowerCase();
+
+  if (
+    lowered.includes("quota") ||
+    lowered.includes("resource_exhausted") ||
+    lowered.includes("429")
+  ) {
+    return "Image generation quota is exhausted for this API key. Wait for quota reset or enable billing.";
+  }
+
+  if (lowered.includes("permission") || lowered.includes("403")) {
+    return "Image model access is blocked for this API key. Verify Gemini image-model access and billing.";
+  }
+
+  return "Image generation failed right now. Please try again.";
+}
+
+function summarizeError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  return raw.replace(/\s+/g, " ").slice(0, 220);
+}
+
 export async function getJournalInsights(note: string, consistency: number, output: number) {
   if (!note && consistency === 5 && output === 5) return "Please write some notes or adjust your scores first!";
 
@@ -52,20 +84,15 @@ export async function getJournalInsights(note: string, consistency: number, outp
         Output Score: ${output}/10
         User Notes: "${note || 'No notes provided.'}"
 
-        Provide a structured response with 3 distinct sections using Markdown:
-        ### 🔍 Observation
-        (1-2 sentences insight into their patterns or mindset)
-
-        ### 💡 Tactical Advice
-        (One specific, actionable thing to do differently)
-
-        ### 🎯 Tomorrow's Focus
-        (A short mantra or focus area)
+        Return plain text only (no markdown, no hashtags, no bullet symbols) in exactly this format:
+        Observation: <1-2 sentences insight>
+        Tactical Advice: <one concrete action>
+        Tomorrow's Focus: <short mantra>
 
         Keep it concise, encouraging, but stoic and sharp.
       `,
     });
-    return response.text;
+    return normalizeJournalInsight(response.text || "");
   } catch (e) {
     console.error("AI Error:", e);
     return "⚠️ AI Assistant unavailable. Please check your API key configuration.";
@@ -99,39 +126,53 @@ export async function breakDownTask(task: string): Promise<string[]> {
   }
 }
 
-export async function generateVisionImage(goal: string): Promise<string | null> {
+export async function generateVisionImage(goal: string): Promise<{ image: string | null; error?: string }> {
   const ai = getAIClient();
-  if (!ai) return null;
+  if (!ai) return { image: null, error: "AI client is not configured." };
 
-  try {
-    // gemini-2.5-flash-image is the most reliable image model on the free tier.
-    // Pro image models often return 403 Forbidden without billing enabled.
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: {
-        parts: [
-          {
-            text: `A futuristic, high-tech, cinematic visualization of this goal being achieved: "${goal}". 
-                   Style: Cyberpunk, Neon, Solarpunk, Highly detailed, Inspirational, 4k. 
-                   No text in the image.`
+  const models = [
+    "gemini-2.5-flash-image",
+    "gemini-3-pro-image-preview",
+    "gemini-2.0-flash-exp-image-generation",
+  ];
+
+  let lastError: unknown = null;
+
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: {
+          parts: [
+            {
+              text: `A futuristic, high-tech, cinematic visualization of this goal being achieved: "${goal}".
+                     Style: Cyberpunk, Neon, Solarpunk, Highly detailed, Inspirational, 4k.
+                     No text in the image.`,
+            },
+          ],
+        },
+        config: {
+          imageConfig: {
+            aspectRatio: "16:9",
+          },
+          responseModalities: ["TEXT", "IMAGE"],
+        },
+      });
+
+      for (const candidate of response.candidates || []) {
+        for (const part of candidate.content?.parts || []) {
+          if (part.inlineData?.data) {
+            return { image: `data:image/png;base64,${part.inlineData.data}` };
           }
-        ]
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "16:9"
         }
       }
-    });
 
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        return `data:image/png;base64,${part.inlineData.data}`;
-      }
+      lastError = new Error(`No image payload returned from ${model}`);
+    } catch (e) {
+      lastError = e;
+      console.error(`Image Gen Error (${model}): ${summarizeError(e)}`);
     }
-    return null;
-  } catch (e) {
-    console.error("Image Gen Error:", e);
-    return null;
   }
+
+  return { image: null, error: explainImageError(lastError) };
 }

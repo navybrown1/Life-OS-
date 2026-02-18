@@ -111,6 +111,7 @@ export default function App() {
   const [generatingImage, setGeneratingImage] = useState(false);
   const [visionImage, setVisionImage] = useState<string | null>(null);
   const [missionImage, setMissionImage] = useState<string | null>(null);
+  const [imageGenError, setImageGenError] = useState<string | null>(null);
 
   // Game States
   const [showArcade, setShowArcade] = useState(false);
@@ -227,12 +228,15 @@ export default function App() {
     if(!text) return;
     playSound('click');
     setGeneratingImage(true);
+    setImageGenError(null);
     try {
-        const img = await generateVisionImage(text);
-        if(img) {
-            if(type === 'onething') setVisionImage(img);
-            if(type === 'mission') setMissionImage(img);
+        const result = await generateVisionImage(text);
+        if(result.image) {
+            if(type === 'onething') setVisionImage(result.image);
+            if(type === 'mission') setMissionImage(result.image);
             triggerCelebrate("Vision Generated");
+        } else {
+            setImageGenError(result.error || "Image generation failed right now.");
         }
     } finally {
         setGeneratingImage(false);
@@ -381,6 +385,9 @@ export default function App() {
                                         </Button>
                                     )}
                                 </div>
+                                {imageGenError && (
+                                    <p className="mt-2 text-xs text-amber-300/90 leading-relaxed">{imageGenError}</p>
+                                )}
                              </CardContent>
                         </Card>
 
@@ -419,15 +426,20 @@ export default function App() {
                                             </div>
                                         </div>
                                     ) : (
-                                        <Button 
-                                            variant="outline" 
-                                            className="w-full border-dashed border-slate-700 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/50"
-                                            onClick={() => handleGenerateVision('onething', day.oneThing)}
-                                            disabled={generatingImage || !day.oneThing}
-                                        >
-                                            {generatingImage ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ImageIcon className="h-4 w-4 mr-2" />}
-                                            {generatingImage ? "Dreaming..." : "Visualize Success (AI)"}
-                                        </Button>
+                                        <div className="space-y-2">
+                                            <Button 
+                                                variant="outline" 
+                                                className="w-full border-dashed border-slate-700 text-slate-500 hover:text-indigo-400 hover:border-indigo-500/50"
+                                                onClick={() => handleGenerateVision('onething', day.oneThing)}
+                                                disabled={generatingImage || !day.oneThing}
+                                            >
+                                                {generatingImage ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <ImageIcon className="h-4 w-4 mr-2" />}
+                                                {generatingImage ? "Dreaming..." : "Visualize Success (AI)"}
+                                            </Button>
+                                            {imageGenError && (
+                                                <p className="text-xs text-amber-300/90 leading-relaxed">{imageGenError}</p>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                              </CardContent>
