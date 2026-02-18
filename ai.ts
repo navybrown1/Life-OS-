@@ -2,9 +2,10 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 let aiClient: GoogleGenAI | null = null;
 let missingApiKeyWarned = false;
-const TEXT_MODEL_PRIMARY = "gemini-3-pro-preview";
-const TEXT_MODEL_FALLBACK = "gemini-3-flash-preview";
-const IMAGE_MODEL_PRIMARY = "gemini-3-pro-image-preview";
+const TEXT_MODEL_PRIMARY = "gemini-2.5-flash-lite";
+const TEXT_MODEL_FALLBACK = "gemini-2.5-flash-lite";
+const IMAGE_MODEL_PRIMARY = "gemini-2.5-flash-image-preview";
+const IMAGE_MODEL_FALLBACK = "gemini-2.5-flash-image";
 
 function getApiKey(): string {
   const fromVite =
@@ -169,9 +170,9 @@ export async function generateVisionImage(goal: string): Promise<{ image: string
   const ai = getAIClient();
   if (!ai) return { image: null, error: "AI client is not configured." };
 
-  try {
+  const tryGenerateImage = async (model: string): Promise<string | null> => {
     const response = await ai.models.generateContent({
-      model: IMAGE_MODEL_PRIMARY,
+      model,
       contents: {
         parts: [
           {
@@ -192,20 +193,31 @@ export async function generateVisionImage(goal: string): Promise<{ image: string
     for (const candidate of response.candidates || []) {
       for (const part of candidate.content?.parts || []) {
         if (part.inlineData?.data) {
-          return { image: `data:image/png;base64,${part.inlineData.data}` };
+          return `data:image/png;base64,${part.inlineData.data}`;
         }
       }
     }
+    return null;
+  };
 
-    return {
-      image: null,
-      error: `${IMAGE_MODEL_PRIMARY} returned no image payload.`,
-    };
+  try {
+    const image = await tryGenerateImage(IMAGE_MODEL_PRIMARY);
+    if (image) return { image };
+    const fallbackImage = await tryGenerateImage(IMAGE_MODEL_FALLBACK);
+    if (fallbackImage) return { image: fallbackImage };
+    return { image: null, error: `${IMAGE_MODEL_FALLBACK} returned no image payload.` };
   } catch (e) {
     console.error(`Image Gen Error (${IMAGE_MODEL_PRIMARY}): ${summarizeError(e)}`);
-    return {
-      image: null,
-      error: `${explainImageError(e)} (${IMAGE_MODEL_PRIMARY})`,
-    };
+    try {
+      const fallbackImage = await tryGenerateImage(IMAGE_MODEL_FALLBACK);
+      if (fallbackImage) return { image: fallbackImage };
+      return { image: null, error: `${IMAGE_MODEL_FALLBACK} returned no image payload.` };
+    } catch (fallbackError) {
+      console.error(`Image Gen Error (${IMAGE_MODEL_FALLBACK}): ${summarizeError(fallbackError)}`);
+      return {
+        image: null,
+        error: `${explainImageError(fallbackError)} (${IMAGE_MODEL_FALLBACK})`,
+      };
+    }
   }
 }
