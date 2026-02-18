@@ -1,9 +1,45 @@
 import { GoogleGenAI, Type } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+let aiClient: GoogleGenAI | null = null;
+let missingApiKeyWarned = false;
+
+function getApiKey(): string {
+  const fromVite =
+    typeof import.meta !== "undefined" &&
+    import.meta.env &&
+    typeof import.meta.env.VITE_GEMINI_API_KEY === "string"
+      ? import.meta.env.VITE_GEMINI_API_KEY
+      : "";
+  const fromProcess =
+    typeof process !== "undefined"
+      ? process.env.API_KEY || process.env.GEMINI_API_KEY || ""
+      : "";
+  return (fromVite || fromProcess || "").trim();
+}
+
+function getAIClient(): GoogleGenAI | null {
+  if (aiClient) return aiClient;
+
+  const apiKey = getApiKey();
+  if (!apiKey) {
+    if (!missingApiKeyWarned) {
+      console.warn("GEMINI_API_KEY is missing. AI features are disabled.");
+      missingApiKeyWarned = true;
+    }
+    return null;
+  }
+
+  aiClient = new GoogleGenAI({ apiKey });
+  return aiClient;
+}
 
 export async function getJournalInsights(note: string, consistency: number, output: number) {
   if (!note && consistency === 5 && output === 5) return "Please write some notes or adjust your scores first!";
+
+  const ai = getAIClient();
+  if (!ai) {
+    return "⚠️ AI Assistant unavailable. Configure GEMINI_API_KEY in Vercel environment variables.";
+  }
   
   try {
     // Using gemini-3-flash-preview because it has much higher rate limits on the free tier (15 RPM)
@@ -37,6 +73,9 @@ export async function getJournalInsights(note: string, consistency: number, outp
 }
 
 export async function breakDownTask(task: string): Promise<string[]> {
+  const ai = getAIClient();
+  if (!ai) return [task];
+
   try {
     // Using gemini-3-flash-preview for speed and reliability
     const response = await ai.models.generateContent({
@@ -61,6 +100,9 @@ export async function breakDownTask(task: string): Promise<string[]> {
 }
 
 export async function generateVisionImage(goal: string): Promise<string | null> {
+  const ai = getAIClient();
+  if (!ai) return null;
+
   try {
     // gemini-2.5-flash-image is the most reliable image model on the free tier.
     // Pro image models often return 403 Forbidden without billing enabled.
