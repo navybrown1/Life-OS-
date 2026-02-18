@@ -2,13 +2,9 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 let aiClient: GoogleGenAI | null = null;
 let missingApiKeyWarned = false;
-const TEXT_MODEL_PRIMARY = "gemini-3-flash-preview";
-const TEXT_MODEL_FALLBACK = "gemini-3-pro-preview";
-const IMAGE_MODELS = [
-  "gemini-3-pro-image-preview",
-  "gemini-3-flash-preview",
-  "gemini-3-pro-preview",
-] as const;
+const TEXT_MODEL_PRIMARY = "gemini-3-pro-preview";
+const TEXT_MODEL_FALLBACK = "gemini-3-flash-preview";
+const IMAGE_MODEL_PRIMARY = "gemini-3-pro-image-preview";
 
 function getApiKey(): string {
   const fromVite =
@@ -173,43 +169,43 @@ export async function generateVisionImage(goal: string): Promise<{ image: string
   const ai = getAIClient();
   if (!ai) return { image: null, error: "AI client is not configured." };
 
-  let lastError: unknown = null;
-
-  for (const model of IMAGE_MODELS) {
-    try {
-      const response = await ai.models.generateContent({
-        model,
-        contents: {
-          parts: [
-            {
-              text: `A futuristic, high-tech, cinematic visualization of this goal being achieved: "${goal}".
-                     Style: Cyberpunk, Neon, Solarpunk, Highly detailed, Inspirational, 4k.
-                     No text in the image.`,
-            },
-          ],
-        },
-        config: {
-          imageConfig: {
-            aspectRatio: "16:9",
+  try {
+    const response = await ai.models.generateContent({
+      model: IMAGE_MODEL_PRIMARY,
+      contents: {
+        parts: [
+          {
+            text: `A futuristic, high-tech, cinematic visualization of this goal being achieved: "${goal}".
+                   Style: Cyberpunk, Neon, Solarpunk, Highly detailed, Inspirational, 4k.
+                   No text in the image.`,
           },
-          responseModalities: ["TEXT", "IMAGE"],
+        ],
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "16:9",
         },
-      });
+        responseModalities: ["TEXT", "IMAGE"],
+      },
+    });
 
-      for (const candidate of response.candidates || []) {
-        for (const part of candidate.content?.parts || []) {
-          if (part.inlineData?.data) {
-            return { image: `data:image/png;base64,${part.inlineData.data}` };
-          }
+    for (const candidate of response.candidates || []) {
+      for (const part of candidate.content?.parts || []) {
+        if (part.inlineData?.data) {
+          return { image: `data:image/png;base64,${part.inlineData.data}` };
         }
       }
-
-      lastError = new Error(`No image payload returned from ${model}`);
-    } catch (e) {
-      lastError = e;
-      console.error(`Image Gen Error (${model}): ${summarizeError(e)}`);
     }
-  }
 
-  return { image: null, error: explainImageError(lastError) };
+    return {
+      image: null,
+      error: `${IMAGE_MODEL_PRIMARY} returned no image payload.`,
+    };
+  } catch (e) {
+    console.error(`Image Gen Error (${IMAGE_MODEL_PRIMARY}): ${summarizeError(e)}`);
+    return {
+      image: null,
+      error: `${explainImageError(e)} (${IMAGE_MODEL_PRIMARY})`,
+    };
+  }
 }
