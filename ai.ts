@@ -2,6 +2,13 @@ import { GoogleGenAI, Type } from "@google/genai";
 
 let aiClient: GoogleGenAI | null = null;
 let missingApiKeyWarned = false;
+const TEXT_MODEL_PRIMARY = "gemini-3-flash-preview";
+const TEXT_MODEL_FALLBACK = "gemini-3-pro-preview";
+const IMAGE_MODELS = [
+  "gemini-3-pro-image-preview",
+  "gemini-3-flash-preview",
+  "gemini-3-pro-preview",
+] as const;
 
 function getApiKey(): string {
   const fromVite =
@@ -74,10 +81,8 @@ export async function getJournalInsights(note: string, consistency: number, outp
   }
   
   try {
-    // Using gemini-3-flash-preview because it has much higher rate limits on the free tier (15 RPM)
-    // compared to Pro (2 RPM), ensuring the app doesn't crash if you click buttons quickly.
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: TEXT_MODEL_PRIMARY,
       contents: `
         Act as a high-performance productivity coach (LifeOS). Analyze this daily record:
         Consistency Score: ${consistency}/10
@@ -94,8 +99,29 @@ export async function getJournalInsights(note: string, consistency: number, outp
     });
     return normalizeJournalInsight(response.text || "");
   } catch (e) {
-    console.error("AI Error:", e);
-    return "⚠️ AI Assistant unavailable. Please check your API key configuration.";
+    console.error(`AI Error (${TEXT_MODEL_PRIMARY}):`, e);
+    try {
+      const fallback = await ai.models.generateContent({
+        model: TEXT_MODEL_FALLBACK,
+        contents: `
+          Act as a high-performance productivity coach (LifeOS). Analyze this daily record:
+          Consistency Score: ${consistency}/10
+          Output Score: ${output}/10
+          User Notes: "${note || 'No notes provided.'}"
+
+          Return plain text only (no markdown, no hashtags, no bullet symbols) in exactly this format:
+          Observation: <1-2 sentences insight>
+          Tactical Advice: <one concrete action>
+          Tomorrow's Focus: <short mantra>
+
+          Keep it concise, encouraging, but stoic and sharp.
+        `,
+      });
+      return normalizeJournalInsight(fallback.text || "");
+    } catch (fallbackError) {
+      console.error(`AI Error (${TEXT_MODEL_FALLBACK}):`, fallbackError);
+      return "⚠️ AI Assistant unavailable. Please check your API key configuration.";
+    }
   }
 }
 
@@ -104,9 +130,8 @@ export async function breakDownTask(task: string): Promise<string[]> {
   if (!ai) return [task];
 
   try {
-    // Using gemini-3-flash-preview for speed and reliability
     const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
+      model: TEXT_MODEL_PRIMARY,
       contents: `Break down the task "${task}" into 3-5 smaller, concrete, actionable steps that can be done in <30 mins each.`,
       config: {
         responseMimeType: "application/json",
@@ -121,8 +146,26 @@ export async function breakDownTask(task: string): Promise<string[]> {
     if (!text) return [task];
     return JSON.parse(text);
   } catch (e) {
-    console.error("AI Error:", e);
-    return [task]; 
+    console.error(`AI Error (${TEXT_MODEL_PRIMARY}):`, e);
+    try {
+      const fallback = await ai.models.generateContent({
+        model: TEXT_MODEL_FALLBACK,
+        contents: `Break down the task "${task}" into 3-5 smaller, concrete, actionable steps that can be done in <30 mins each.`,
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+        },
+      });
+      const text = fallback.text;
+      if (!text) return [task];
+      return JSON.parse(text);
+    } catch (fallbackError) {
+      console.error(`AI Error (${TEXT_MODEL_FALLBACK}):`, fallbackError);
+      return [task];
+    }
   }
 }
 
@@ -130,15 +173,9 @@ export async function generateVisionImage(goal: string): Promise<{ image: string
   const ai = getAIClient();
   if (!ai) return { image: null, error: "AI client is not configured." };
 
-  const models = [
-    "gemini-2.5-flash-image",
-    "gemini-3-pro-image-preview",
-    "gemini-2.0-flash-exp-image-generation",
-  ];
-
   let lastError: unknown = null;
 
-  for (const model of models) {
+  for (const model of IMAGE_MODELS) {
     try {
       const response = await ai.models.generateContent({
         model,
